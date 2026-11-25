@@ -1,6 +1,13 @@
 // Deterministic fixed-step simulation. No rendering code in here.
-// Ghosts replay recorded inputs through this exact same simulation, so they
-// interact with the world (plates, boxes, lifts, each other) just like you did.
+//
+// Clones replay your recorded inputs through this same simulation, so they push
+// boxes, ride lifts and stand on each other exactly as you did.
+//
+// Pause-and-resume: each clone has its own replay clock. If, while replaying, a
+// clone runs into something that wasn't there when it was recorded (you, a later
+// clone, a box you moved, or an earlier clone that is running late), it freezes
+// for that tick and its clock doesn't advance. It resumes when the way is clear,
+// so it follows its exact recorded path, just later.
 
 export const DT = 1 / 60;
 export const GRAV = 32;
@@ -13,6 +20,7 @@ export const STEP = 0.36;   // auto step-up height
 export const FALL_Y = -18;
 export const IDLE = [0, 0, 0];
 const EPS = 1e-5;
+const CRUMBLE = 0.35;       // seconds a fragile tile lasts after everyone steps off
 
 export function ov(a, b) {
   return a.x0 < b.x1 - EPS && a.x1 > b.x0 + EPS &&
@@ -29,9 +37,16 @@ class Static {
   aabb() { return this.bb; }
 }
 
+// Fragile tile: solid until someone has stood on it and then everyone has stepped off.
+class Fragile {
+  constructor(d) { this.kind = 'fragile'; this.def = d; this.bb = bbox(d.p, d.s); this.x = this.y = this.z = this.px = this.py = this.pz = 0; this.reset(); }
+  reset() { this.touched = false; this.t = 0; this.gone = false; }
+  aabb() { return this.bb; }
+}
+
 class Door {
   constructor(d) { this.kind = 'door'; this.def = d; this.id = d.id; this.s = d.s; this.rise = d.rise ?? 3.1; this.reset(); }
-  reset() { this.off = 0; this.active = false; [this.x, this.y, this.z] = this.def.p; savePrev(this); }
+  reset() { this.active = !!this.def.invert; this.off = this.active ? this.rise : 0; [this.x, this.y, this.z] = this.def.p; this.y += this.off; savePrev(this); }
   aabb() { return bbox([this.x, this.y, this.z], this.s); }
   update(w) {
     const target = this.active ? this.rise : 0, sp = 7 * DT;
@@ -40,27 +55,40 @@ class Door {
       const n = Math.max(target, this.off - sp), oy = this.y;
       this.y = this.def.p[1] + n;
       const bb = this.aabb();
-      if (w.bodies.some(b => !b.gone && ov(b.aabb(), bb))) { this.y = oy; return; } // blocked: never crush
+      if (w.bodies.some(b => !b.gone && ov(b.aabb(), bb))) { this.y = oy; return; } // never crush anyone
       this.off = n;
     }
     this.y = this.def.p[1] + this.off;
   }
 }
 
-class Bridge {
+// Moving platform. Linked: slides from -> to while its plate is held.
+// loop: shuttles back and forth forever with that period (seconds), on the level clock.
+class Mover {
   constructor(d) {
     this.kind = 'bridge'; this.def = d; this.id = d.id; this.s = d.s; this.from = d.from; this.to = d.to;
     this.len = Math.hypot(d.to[0] - d.from[0], d.to[1] - d.from[1], d.to[2] - d.from[2]);
     this.speed = d.speed ?? 6; this.reset();
   }
-  reset() { this.u = 0; this.active = false; this.place(); savePrev(this); }
+  reset() { this.active = !!this.def.invert; this.u = this.def.loop ? this.loopU(0) : (this.active ? 1 : 0); this.place(); savePrev(this); }
+  loopU(tick) { return 0.5 - 0.5 * Math.cos(2 * Math.PI * (tick * DT / this.def.loop + (this.def.phase ?? 0))); }
   place() { const f = this.from, t = this.to, u = this.u; this.x = f[0] + (t[0] - f[0]) * u; this.y = f[1] + (t[1] - f[1]) * u; this.z = f[2] + (t[2] - f[2]) * u; }
   aabb() { return bbox([this.x, this.y, this.z], this.s); }
-  update() {
-    const du = this.speed * DT / this.len;
-    if (this.active) this.u = Math.min(1, this.u + du); else this.u = Math.max(0, this.u - du);
+  update(w) {
+    if (this.def.loop) this.u = this.loopU(w.tick + 1);
+    else {
+      const du = this.speed * DT / this.len;
+      this.u = this.active ? Math.min(1, this.u + du) : Math.max(0, this.u - du);
+    }
     this.place();
   }
+}
+
+// Laser fence: deadly while on. Linked lasers switch OFF while their plate condition holds.
+class Laser {
+  constructor(d) { this.kind = 'laser'; this.def = d; this.id = d.id; this.bb = bbox(d.p, d.s); this.reset(); }
+  reset() { this.active = !!this.def.invert; this.on = this.def.id ? !this.active : true; }
+  update() { this.on = this.def.id ? !this.active : true; }
 }
 
 class Pan {
@@ -93,9 +121,13 @@ export class Body {
     this.kind = kind;
     this.hw = kind === 'box' ? 0.5 : HW;
     this.h = kind === 'box' ? 1 : CH;
-    this.spawn = p; this.rec = opts.rec || null; this.isPlayer = !!opts.isPlayer; this.ghostIndex = opts.ghostIndex ?? -1;
+    this.spawn = p; this.rec = opts.rec || null; this.isPlayer = !!opts.isPlayer;
+    this.ghostIndex = opts.ghostIndex ?? -1;
+    this.rank = opts.rank ?? -1;           // clone order: run 1 = 0, ...; the live player is highest
     this.x = p[0]; this.y = p[1]; this.z = p[2]; savePrev(this);
     this.vx = this.vy = this.vz = 0; this.ground = null; this.coyote = 0; this.jumpBuf = 0; this.gone = false; this.canStep = false;
+    this.clock = 0; this.paused = false; this.delay = 0; this.blocked = false;
+    this.tamper = -1;                      // boxes: highest rank that has pushed it
   }
   aabb() { return { x0: this.x - this.hw, x1: this.x + this.hw, y0: this.y, y1: this.y + this.h, z0: this.z - this.hw, z1: this.z + this.hw }; }
 
@@ -109,7 +141,7 @@ export class Body {
       if (s === this || s.gone) continue;
       let sb = s.aabb();
       if (!ov(this.aabb(), sb)) continue;
-      // characters that already overlap (e.g. everyone spawning on the same spot) pass through each other until they separate
+      // characters that already overlap (everyone spawns on the same spot) pass through each other until they separate
       if (s.kind === 'char' && before && ov(before, sb)) continue;
       if (axis !== 'y') {
         if (this.kind === 'char' && this.canStep) {
@@ -126,11 +158,16 @@ export class Body {
         if (canPush && s.kind === 'box') {
           const bb = this.aabb();
           const pen = d > 0 ? bb[hi] - sb[lo] : sb[hi] - bb[lo];
-          s.pushed(axis, d > 0 ? pen : -pen, w, this);
-          sb = s.aabb();
-          if (!ov(this.aabb(), sb)) continue;
+          if (this.rec && w.offScript(this, s)) { this.blocked = true; }
+          else {
+            s.pushed(axis, d > 0 ? pen : -pen, w, this);
+            if (this.rank > s.tamper) s.tamper = this.rank;
+            sb = s.aabb();
+            if (!ov(this.aabb(), sb)) continue;
+          }
         }
       }
+      if (this.rec && w.offScript(this, s)) this.blocked = true;
       if (axis === 'y') {
         if (d < 0) { this.y = sb.y1; this.ground = s; } else { this.y = sb.y0 - this.h; }
         this.vy = 0;
@@ -169,10 +206,10 @@ export class Body {
     this.moveAxis('y', this.vy * DT, w, false);
   }
 
-  stepChar(input, w) {
+  stepChar(input, w, doCarry = true) {
     const mx = input[0], mz = input[1], jp = input[2];
-    this.carry(w);
-    const grounded = !!this.ground;
+    if (doCarry) this.carry(w);
+    const grounded = !!this.ground && !this.ground.gone;
     this.canStep = grounded;
     if (grounded) this.coyote = 6; else if (this.coyote > 0) this.coyote--;
     if (jp) this.jumpBuf = 8; else if (this.jumpBuf > 0) this.jumpBuf--;
@@ -187,6 +224,21 @@ export class Body {
     if (this.moveAxis('x', this.vx * DT, w, true)) this.vx *= 0.5;
     if (this.moveAxis('z', this.vz * DT, w, true)) this.vz *= 0.5;
   }
+
+  // A clone's tick: replay the next recorded input, unless that bumps into something off-script.
+  stepGhost(w) {
+    this.carry(w);
+    const inputs = this.rec.inputs;
+    const live = this.clock < inputs.length;
+    if (!live) { this.paused = false; this.stepChar(IDLE, w, false); this.clock++; return; }
+    const snap = [this.x, this.y, this.z, this.vx, this.vy, this.vz, this.ground, this.coyote, this.jumpBuf, this.canStep];
+    this.blocked = false;
+    this.stepChar(inputs[this.clock], w, false);
+    if (this.blocked) {
+      [this.x, this.y, this.z, this.vx, this.vy, this.vz, this.ground, this.coyote, this.jumpBuf, this.canStep] = snap;
+      this.jumped = false; this.paused = true; this.delay++;
+    } else { this.paused = false; this.clock++; }
+  }
 }
 
 function onPlate(b, p) {
@@ -199,29 +251,46 @@ export class World {
   constructor(def) {
     this.def = def;
     this.statics = def.statics.map(s => new Static(s));
+    this.fragiles = (def.fragile || []).map(f => new Fragile(f));
     this.doors = (def.doors || []).map(d => new Door(d));
-    this.bridges = (def.bridges || []).map(d => new Bridge(d));
+    this.bridges = (def.bridges || []).map(d => new Mover(d));
+    this.lasers = (def.lasers || []).map(d => new Laser(d));
     this.scales = (def.scales || []).map(d => new Scale(d));
     this.pans = this.scales.flatMap(s => [s.a, s.b]);
     this.plates = (def.plates || []).map(p => ({ def: p, x: p.p[0], y: p.p[1], z: p.p[2], link: p.link, pressed: false }));
     this.movers = [...this.doors, ...this.bridges, ...this.pans];
-    this.linked = [...this.doors, ...this.bridges];
+    this.linked = [...this.doors, ...this.bridges.filter(b => b.id), ...this.lasers.filter(l => l.id)];
     const g = def.goal;
     this.goalBB = { x0: g[0] - 0.6, x1: g[0] + 0.6, y0: g[1], y1: g[1] + 2.2, z0: g[2] - 0.6, z1: g[2] + 0.6 };
+    this.plateTotals = {};
+    for (const p of this.plates) this.plateTotals[p.link] = (this.plateTotals[p.link] || 0) + 1;
     this.shardTaken = false;
   }
 
   reset(recs) {
     for (const d of this.linked) d.reset();
+    for (const b of this.bridges) b.reset();
+    for (const f of this.fragiles) f.reset();
     for (const s of this.scales) s.reset();
     for (const p of this.plates) p.pressed = false;
     this.boxes = (this.def.boxes || []).map(b => new Body('box', b.p));
-    this.chars = recs.map((r, i) => new Body('char', this.def.spawn, { rec: r, ghostIndex: i }));
-    this.player = new Body('char', this.def.spawn, { isPlayer: true });
-    this.chars.push(this.player);
+    this.ghosts = recs.map((r, i) => new Body('char', this.def.spawn, { rec: r, ghostIndex: i, rank: i }));
+    this.player = new Body('char', this.def.spawn, { isPlayer: true, rank: recs.length });
+    this.chars = [...this.ghosts, this.player];
     this.bodies = [...this.boxes, ...this.chars];
-    this.all = [...this.statics, ...this.movers, ...this.bodies];
-    this.tick = 0; this.rec = []; this.events = [];
+    this.all = [...this.statics, ...this.fragiles, ...this.movers, ...this.bodies];
+    this.tick = 0; this.rec = { inputs: [], clocks: [] }; this.events = [];
+  }
+
+  // Was this obstacle absent (or elsewhere) when clone g was recorded?
+  offScript(g, s) {
+    if (s.kind === 'char') {
+      if (s.rank > g.rank) return true;                 // you, or a later clone
+      const rc = g.rec.clocks[g.clock];
+      return !rc || rc[s.ghostIndex] !== s.clock;       // an earlier clone that is now running late
+    }
+    if (s.kind === 'box') return s.tamper > g.rank;     // a box moved by you or a later clone
+    return false;
   }
 
   isFree(b) {
@@ -252,19 +321,22 @@ export class World {
     for (const m of this.movers) savePrev(m);
     for (const b of this.bodies) savePrev(b);
 
-    const active = new Set();
+    const cnt = {};
     for (const p of this.plates) {
       const was = p.pressed;
       p.pressed = this.bodies.some(b => onPlate(b, p));
       if (p.pressed !== was) ev.push({ type: p.pressed ? 'plateOn' : 'plateOff' });
-      if (p.pressed) active.add(p.link);
+      if (p.pressed) cnt[p.link] = (cnt[p.link] || 0) + 1;
     }
     for (const d of this.linked) {
-      const was = d.active; d.active = active.has(d.id);
-      if (was !== d.active) ev.push({ type: 'mover', on: d.active, kind: d.kind });
+      const c = cnt[d.id] || 0, t = this.plateTotals[d.id] || 0;
+      let a = d.def.mode === 'all' ? (t > 0 && c === t) : c > 0;
+      if (d.def.invert) a = !a;
+      if (a !== d.active) { d.active = a; ev.push({ type: 'mover', on: a, kind: d.kind }); }
     }
     for (const d of this.doors) d.update(this);
     for (const b of this.bridges) b.update(this);
+    for (const l of this.lasers) l.update(this);
     for (const s of this.scales) s.update(this);
 
     for (const b of this.bodies) {
@@ -272,16 +344,27 @@ export class World {
       for (const m of this.movers) if (ov(b.aabb(), m.aabb())) this.pushOut(b, m);
     }
     for (const box of this.boxes) if (!box.gone) box.stepBox(this);
-    for (const c of this.chars) {
-      if (c.gone) continue;
-      const inp = c.isPlayer ? input : (c.rec[this.tick] || IDLE);
-      c.stepChar(inp, this);
-    }
-    this.rec.push(input);
+    for (const g of this.ghosts) if (!g.gone) g.stepGhost(this);
+    this.rec.clocks.push(Int32Array.from(this.ghosts, g => g.clock));
+    this.player.stepChar(input, this);
+    this.rec.inputs.push(input);
     this.tick++;
 
-    for (const b of this.bodies) if (!b.isPlayer && !b.gone && b.y < -60) b.gone = true;
+    // fragile tiles crumble shortly after the last body steps off
+    for (const f of this.fragiles) {
+      if (f.gone) continue;
+      if (this.bodies.some(b => !b.gone && b.ground === f)) { f.touched = true; f.t = 0; }
+      else if (f.touched && (f.t += DT) >= CRUMBLE) { f.gone = true; ev.push({ type: 'crumble' }); }
+    }
+    // lasers
     const pl = this.player;
+    for (const l of this.lasers) {
+      if (!l.on) continue;
+      for (const g of this.ghosts) if (!g.gone && ov(g.aabb(), l.bb)) { g.gone = true; ev.push({ type: 'ghostZap', g }); }
+      if (ov(pl.aabb(), l.bb)) ev.push({ type: 'zap' });
+    }
+
+    for (const b of this.bodies) if (!b.isPlayer && !b.gone && b.y < -60) b.gone = true;
     if (pl.jumped) ev.push({ type: 'jump' });
     if (pl.y < FALL_Y) ev.push({ type: 'fell' });
     if (ov(pl.aabb(), this.goalBB)) ev.push({ type: 'win' });

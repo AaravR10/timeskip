@@ -27,6 +27,7 @@ canvas#game:active { cursor: grabbing; }
 #hud-level { font-size: 15px; opacity: .85; font-weight: 600; }
 #hud-legend { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; font-size: 15px; font-weight: 600; }
 #hud-legend span { display: flex; align-items: center; gap: 7px; opacity: .92; }
+#hud-legend em { font-style: normal; opacity: .8; font-weight: 500; margin-left: 2px; }
 #hud-legend i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; box-shadow: 0 0 0 2px rgba(255,255,255,.7); }
 #hint { position: absolute; left: 50%; bottom: 58px; transform: translateX(-50%); width: min(640px, 92vw); text-align: center; font: 500 17px/1.4 Barlow, sans-serif; background: rgba(25, 32, 45, .62); padding: 10px 16px; border-radius: 12px; transition: opacity .6s; text-shadow: none; }
 #hint.off { opacity: 0; }
@@ -71,7 +72,12 @@ kbd { font: 600 13px Barlow, sans-serif; background: rgba(0,0,0,.25); padding: 2
 .howto { list-style: none; padding: 0; margin: 28px auto 0; font-size: 15px; opacity: .92; display: grid; gap: 4px; text-shadow: 0 1px 2px rgba(0,0,0,.3); }
 .howto b { font-weight: 600; }
 
-#level-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+#level-grid { margin-bottom: 16px; }
+#level-grid h3 { font: 700 20px/1.2 'Barlow Condensed', sans-serif; margin: 18px 0 10px; opacity: .9; }
+#level-grid h3:first-child { margin-top: 0; }
+.chapter { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+#levels-summary { margin: -8px 0 16px; opacity: .8; font-weight: 600; }
+.panel:has(#level-grid) { width: min(980px, 100%); }
 .lvl { position: relative; text-align: left; font-family: inherit; color: #fff; background: rgba(255,255,255,.1); border: 2px solid rgba(255,255,255,.2); border-radius: 14px; padding: 14px; min-height: 104px; cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
 .lvl:hover:not(:disabled) { background: rgba(255,255,255,.2); }
 .lvl:focus-visible { outline: 3px solid #fff; }
