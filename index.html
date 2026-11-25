@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Timeskip</title>
+<meta name="description" content="A 3D puzzle game about cooperating with your own past selves.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%227%22 fill=%22%237c9cbf%22/%3E%3Ccircle cx=%2212%22 cy=%2211%22 r=%225%22 fill=%22%2345a6dc%22/%3E%3Ccircle cx=%2220%22 cy=%2211%22 r=%225%22 fill=%22%23e0474f%22/%3E%3Crect x=%226%22 y=%2218%22 width=%2220%22 height=%228%22 rx=%222%22 fill=%22%232fd0b0%22/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- In-game HUD -->
+<div id="hud" class="hidden">
+  <div class="hud-left">
+    <div id="hud-skips">TIMESKIPS: 3 / 3</div>
+    <div id="hud-legend"></div>
+  </div>
+  <div class="hud-right">
+    <div id="hud-run">RUN 1</div>
+    <div id="hud-level"></div>
+  </div>
+  <div id="hint"></div>
+  <div id="keys">
+    <span><b>WASD</b> move</span><span><b>Space</b> jump</span><span><b>R</b> timeskip</span><span><b>T</b> retry run</span><span><b>Drag</b> look</span><span><b>Esc</b> menu</span>
+  </div>
+</div>
+
+<div id="banner"><small id="banner-num">Level 1</small><span id="banner-name">Hold the Door</span></div>
+<div id="toast"></div>
+<div id="fx"><span id="fx-text">TIMESKIP</span></div>
+
+<!-- Touch controls -->
+<div id="touch" class="hidden">
+  <div id="joy"><div id="joy-knob"></div></div>
+  <div id="tbtns">
+    <button id="t-pause" aria-label="Menu">❚❚</button>
+    <button id="t-retry" aria-label="Retry run">↺</button>
+    <button id="t-skip" aria-label="Timeskip">SKIP</button>
+    <button id="t-jump" aria-label="Jump">JUMP</button>
+  </div>
+</div>
+
+<!-- Title -->
+<section id="title" class="screen">
+  <div class="panel title-panel">
+    <h1>TIMESKIP</h1>
+    <p class="tag">Every run you play becomes a past self who does it all again.<br>Hold the doors. Be the stepping stone. Be the counterweight.</p>
+    <div class="row">
+      <button class="btn primary" id="btn-play">Play</button>
+      <button class="btn" id="btn-levels">Levels</button>
+    </div>
+    <ul class="howto">
+      <li><b>WASD / arrows</b> move &nbsp;·&nbsp; <b>Space</b> jump &nbsp;·&nbsp; <b>drag</b> to look &nbsp;·&nbsp; <b>scroll</b> zoom</li>
+      <li><b>R</b> timeskip: rewind to the start, and your run replays as a ghost</li>
+      <li><b>T</b> retry this run &nbsp;·&nbsp; <b>Esc</b> menu &nbsp;·&nbsp; <b>H</b> hint &nbsp;·&nbsp; <b>M</b> sound</li>
+    </ul>
+  </div>
+</section>
+
+<!-- Level select -->
+<section id="levels" class="screen hidden">
+  <div class="panel">
+    <h2>Levels</h2>
+    <div id="level-grid"></div>
+    <div class="row"><button class="btn" id="btn-levels-back">Back</button></div>
+  </div>
+</section>
+
+<!-- Pause -->
+<section id="pause" class="screen hidden">
+  <div class="panel small">
+    <h2>Paused</h2>
+    <div class="col">
+      <button class="btn primary" id="btn-resume">Resume</button>
+      <button class="btn" id="btn-retry">Retry run <kbd>T</kbd></button>
+      <button class="btn" id="btn-restart">Restart level</button>
+      <button class="btn" id="btn-pause-levels">Level select</button>
+      <button class="btn" id="btn-sound">Sound: on</button>
+    </div>
+  </div>
+</section>
+
+<!-- Complete -->
+<section id="complete" class="screen hidden">
+  <div class="panel small">
+    <h2 id="c-title">Level complete</h2>
+    <dl id="c-stats"></dl>
+    <div class="col">
+      <button class="btn primary" id="btn-next">Next level <kbd>Enter</kbd></button>
+      <button class="btn" id="btn-replay">Play again</button>
+      <button class="btn" id="btn-c-levels">Level select</button>
+    </div>
+  </div>
+</section>
+
+<script type="module" src="js/game.js"></script>
+</body>
+</html>
